@@ -265,18 +265,18 @@ def reset(largeur, hauteur) :
     pions = []
     
     pions_0 = []
-    pions_0.append(Pion(0,(largeur*0.5,hauteur*0.4)))
+    pions_0.append(Pion(0,(largeur*0.5,hauteur*0.3)))
     for i in range(1,3):
-        pions_0.append(Pion(0,(largeur*(1/3)*i,hauteur*0.3)))
+        pions_0.append(Pion(0,(largeur*(1/3)*i,hauteur*0.2)))
     for i in range(2,4):
-        pions_0.append(Pion(0,(largeur*0.2*i,hauteur*0.2)))
+        pions_0.append(Pion(0,(largeur*0.2*i,hauteur*0.1)))
     
     pions_1 = []
-    pions_1.append(Pion(1,(largeur*0.5,hauteur*0.6)))
+    pions_1.append(Pion(1,(largeur*0.5,hauteur*0.7)))
     for i in range(1,3):
-        pions_1.append(Pion(1,(largeur*(1/3)*i,hauteur*0.7)))
+        pions_1.append(Pion(1,(largeur*(1/3)*i,hauteur*0.8)))
     for i in range(2,4):
-        pions_1.append(Pion(1,(largeur*0.2*i,hauteur*0.8)))
+        pions_1.append(Pion(1,(largeur*0.2*i,hauteur*0.9)))
         
     balle = Balle(largeur, hauteur)
     
@@ -284,7 +284,6 @@ def reset(largeur, hauteur) :
     objets = pions_0+pions_1+[balle]
     
     return pions, objets
-
             
 def game(largeur, hauteur, frottement, terrain_array, bord):
     score = [0, 0]
