@@ -145,8 +145,7 @@ class Pion :
     
     def image(self):
         pygame.draw.circle(terrain, self.couleur, self.position, self.rayon)
-        pygame.draw.circle(terrain, self.couleur*1.2, self.position, self.rayon*0.8)
-        pygame.draw.circle(terrain, self.couleur, self.position, self.rayon*0.6)
+        pygame.draw.circle(terrain, self.couleur*1.2, self.position, self.rayon*0.8, width= 7)
 
     def actif(self, objets, score):
         pygame.draw.circle(terrain, (255,255,255), self.position, 32, 5)
