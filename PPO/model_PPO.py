@@ -39,6 +39,9 @@ class Model :
         out_actor = self.actor(state)
         valeur = self.critic(state)
         
+        if out_actor.dim() == 1 :
+            out_actor.unsqueeze(0)
+        
         pions = out_actor[:, :n_pions]
         angle = out_actor[:, n_pions:n_pions+2]
         vitesse = out_actor[:, -2:]
@@ -59,6 +62,7 @@ class Model :
         epsilon_vitesse = torch.randn_like(sigma_vitesse)
         vitesse_choix = vitesse[:, 0] + sigma_vitesse * epsilon_vitesse if action == None else action[2] 
         log_prob_vitesse = normal_vitesse.log_prob(vitesse_choix)
+        vitesse_choix = torch.minimum(vitesse_choix, torch.tensor(20.0, device=self.device))
         
         log_proba = log_prob_pion + log_prob_angle + log_prob_vitesse
         
@@ -67,7 +71,7 @@ class Model :
         return (action, log_proba, valeur)
     
 class Trainer :
-    def __init__(self, model, lr=1e-4, batch_size=64, epoch=4, epsilon=0.2): #TODO
+    def __init__(self, model, lr=1e-4, batch_size=64, epoch=4, epsilon=0.2):
         self.lr = lr
         self.model = model
         self.batch_size = batch_size

@@ -14,7 +14,6 @@ pygame.display.set_caption("soccer")
 terrain_array = pygame.surfarray.array3d(terrain)
 
 
-frottement = 0.985
 SPEED = 60
 clock = pygame.time.Clock()
 
@@ -174,7 +173,6 @@ class Pion :
             pygame.draw.circle(terrain, (255,255,0), souris, 3.5)
             pygame.draw.circle(terrain, (255,255,0), souris - vecteur, 3.5)
             pygame.display.update()
-
             
         vecteur /= 10
         if vecteur.length_squared() < 1 :
@@ -259,74 +257,84 @@ class Balle :
                 i += 1
         if i == len(objets) :
             self.tap = False
-            
-def reset(largeur, hauteur) :
-    pions = []
-    
-    pions_0 = []
-    pions_0.append(Pion(0,(largeur*0.5,hauteur*0.3)))
-    for i in range(1,3):
-        pions_0.append(Pion(0,(largeur*(1/3)*i,hauteur*0.2)))
-    for i in range(2,4):
-        pions_0.append(Pion(0,(largeur*0.2*i,hauteur*0.1)))
-    
-    pions_1 = []
-    pions_1.append(Pion(1,(largeur*0.5,hauteur*0.7)))
-    for i in range(1,3):
-        pions_1.append(Pion(1,(largeur*(1/3)*i,hauteur*0.8)))
-    for i in range(2,4):
-        pions_1.append(Pion(1,(largeur*0.2*i,hauteur*0.9)))
+  
+class Game :
+    def __init__(self,largeur=700, hauteur=900):
+        self.frottement = 0.985
+
         
-    balle = Balle(largeur, hauteur)
-    
-    pions = [pions_0, pions_1]
-    objets = pions_0+pions_1+[balle]
-    
-    return pions, objets
-            
-def game(largeur, hauteur, frottement, terrain_array, bord):
-    score = [0, 0]
-    
-    pions, objets = reset(largeur, hauteur)
-    
-    affiche(largeur,hauteur, objets, score)
-    pygame.display.update()
-    
-    tour = random.randint(0, 1)
-    
-    while score[0] < 3 and score[1] < 3 :
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                exit()
+        self.score = [0, 0]
         
-        if pygame.mouse.get_pressed()[0] :
-            while pygame.mouse.get_pressed()[0] :
-                pygame.event.pump()
-            souris = pygame.mouse.get_pos()
-            for e in pions[tour] :
-                if (e.position.x - souris[0])**2 + (e.position.y - souris[1])**2 <= 625 : # 25**2 = 625
-                    tour = (tour+e.actif(objets, score))%2
+        
+        self.largeur = largeur
+        self.hauteur = hauteur
+        
+        self.reset()
+
+        affiche(self.largeur,self.hauteur, self.objets, self.score)
+        pygame.display.update()
+        
+        self.tour = random.randint(0, 1)
+    
+    def reset(self) :
+        self.pions = []
+        
+        pions_0 = []
+        pions_0.append(Pion(0,(self.largeur*0.5,self.hauteur*0.3)))
+        for i in range(1,3):
+            pions_0.append(Pion(0,(self.largeur*(1/3)*i,self.hauteur*0.2)))
+        for i in range(2,4):
+            pions_0.append(Pion(0,(self.largeur*0.2*i,self.hauteur*0.1)))
+        
+        pions_1 = []
+        pions_1.append(Pion(1,(self.largeur*0.5,self.hauteur*0.7)))
+        for i in range(1,3):
+            pions_1.append(Pion(1,(self.largeur*(1/3)*i,self.hauteur*0.8)))
+        for i in range(2,4):
+            pions_1.append(Pion(1,(self.largeur*0.2*i,self.hauteur*0.9)))
+            
+        self.balle = Balle(self.largeur,self.hauteur)
+        
+        self.pions = [pions_0, pions_1]
+        self.objets = pions_0+pions_1+[self.balle]
+        
+    def coup(self):
+        while True :
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    exit()
+            if pygame.mouse.get_pressed()[0] :
+                while pygame.mouse.get_pressed()[0] :
+                    pygame.event.pump()
+                souris = pygame.mouse.get_pos()
+                for e in self.pions[self.tour] :
+                    if (e.position.x - souris[0])**2 + (e.position.y - souris[1])**2 <= 625 : # 25**2 = 625
+                        self.tour = (self.tour+e.actif(self.objets, self.score))%2  
+                        return
                     
-                    while not np.all([_.vitesse == (0,0) for _ in objets]) :
-                        pygame.event.pump()
-                        for e in objets :
-                            e.deplacement(frottement)
-                            e.choc(objets, bord, terrain_array)
-                            
-                            but_val = objets[-1].but(largeur, hauteur)
-                            if but_val != None :
-                                score[but_val] += 1
-                                pions, objets  = reset(largeur, hauteur)
-                                tour = but_val
-                            
-                            affiche(largeur,hauteur, objets, score)
-                            pygame.display.update()
-                            
-                        clock.tick(SPEED)
-                    break
+    def partie(self, terrain_array, bord):  
+        while self.score[0] < 3 and self.score[1] < 3 :
+            self.coup()
+            while not np.all([_.vitesse == (0,0) for _ in self.objets]) :
+                pygame.event.pump()
+                for e in self.objets :
+                    e.deplacement(self.frottement)
+                    e.choc(self.objets, bord, terrain_array)
+                    
+                    but_val = self.objets[-1].but(largeur, hauteur)
+                    if but_val != None :
+                        self.score[but_val] += 1
+                        self.reset()
+                        self.tour = but_val
+                    
+                    affiche(self.largeur, self.hauteur, self.objets, self.score)
+                    pygame.display.update()
+                    
+                clock.tick(SPEED)
     
-game(largeur, hauteur, frottement, terrain_array, bord)
+game = Game()
+game.partie(terrain_array, bord)
 
 pygame.quit()
 exit()
