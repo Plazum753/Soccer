@@ -262,11 +262,11 @@ class Balle :
             self.tap = False
   
 class Game :
-    def __init__(self,largeur=700, hauteur=900, joueurs = ("ia","ia"), training=True):
+    def __init__(self,largeur=700, hauteur=900, joueurs = ("ia","ia"), training=True, agents=None):
         self.frottement = 0.985
         self.joueurs = joueurs
         
-        self.agents = [Agent(team=0), Agent(team=1)]
+        self.agents = [Agent(team=0), Agent(team=1)] if agents == None else agents
         self.training = training
         
         self.score = [0, 0]
@@ -345,8 +345,10 @@ class Game :
                     but_val = self.objets[-1].but(largeur, hauteur)
                     if but_val != None :
                         self.score[but_val] += 1
-                        self.agents[but_val].fin(1)
-                        self.agents[but_val-1].fin(-1)
+                        if training == True :
+                            self.agents[but_val].fin(1)
+                            self.agents[but_val-1].fin(-1)
+                            print()
                         self.reset()
                         self.tour = but_val
                     if training == False :
@@ -358,7 +360,8 @@ class Game :
 
 if training == True :
     while True :
-        game = Game()
+        agents = [Agent(team=0), Agent(team=1)]
+        game = Game(agents=agents)
         game.partie(terrain_array, bord)
         
 game = Game(joueurs = ("ia","ia"), training=False)

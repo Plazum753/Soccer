@@ -5,15 +5,16 @@ import numpy as np
 
 class Agent:
     def __init__(self, gamma=0.99, batch_size=64, team=0, n_pions=5):
+        self.team = team
+
         self.n_buts = 0
         self.n_pions = n_pions
         self.gamma = gamma
         self.batch_size = batch_size
         self.memory = []
         self.memory_game = []
-        self.model = Model(self.n_pions*4+2, 32, 4)
+        self.model = Model(self.n_pions*4+2, 32+self.team*32, 4+self.team*6)
         self.trainer = Trainer(self.model, batch_size=self.batch_size)
-        self.team = team
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         self.load(filename="save"+str(self.team)+".pth")
@@ -57,7 +58,9 @@ class Agent:
         torch.save({
         'actor': self.model.actor.state_dict(),
         'critic': self.model.critic.state_dict(),
-        "n_but": self.n_buts}, filename)
+        'optimizer_critic': self.model.optimizer_critic.state_dict(),
+        'optimizer_actor': self.model.optimizer_actor.state_dict(),
+        "n_buts": self.n_buts}, filename)
         print(f"💾 Modèle sauvegardé dans {filename}")
         
     def load(self, filename="save.pth"):
@@ -65,7 +68,12 @@ class Agent:
             sauvegarde = torch.load(filename)
             self.model.actor.load_state_dict(sauvegarde["actor"])
             self.model.critic.load_state_dict(sauvegarde["critic"])
+            self.model.optimizer_critic.load_state_dict(sauvegarde["optimizer_critic"])
+            self.model.optimizer_actor.load_state_dict(sauvegarde["optimizer_actor"])
             self.n_buts = sauvegarde["n_buts"]
+            
+            self.model.actor.to(self.model.device)
+            self.model.critic.to(self.model.device)
             
             print(f"✅ model chargée depuis {filename}")
         except Exception as e:

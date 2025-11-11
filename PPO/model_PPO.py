@@ -5,7 +5,9 @@ import torch.distributions as dist
 import torch.nn.functional as F
 
 class Model :
-    def __init__(self, input_size, hidden_size, n_hidden_layers, n_pions=5) :
+    def __init__(self, input_size, hidden_size, n_hidden_layers, n_pions=5, lr=1e-4) :
+        self.lr = lr
+        
         layer_actor = []
         layer_actor.append(nn.Linear(input_size, hidden_size))
         layer_actor.append(nn.ReLU())
@@ -34,6 +36,9 @@ class Model :
         
         self.actor.to(self.device)
         self.critic.to(self.device)
+        
+        self.optimizer_critic = optim.Adam(self.critic.parameters(), lr = self.lr)
+        self.optimizer_actor = optim.Adam(self.actor.parameters(), lr = self.lr)
     
     def forward(self, state, n_pions=5, action=None) :
         out_actor = self.actor(state)
@@ -70,14 +75,11 @@ class Model :
         return (action, log_proba, valeur)
         
 class Trainer :
-    def __init__(self, model, lr=1e-4, batch_size=64, epoch=4, epsilon=0.2):
-        self.lr = lr
+    def __init__(self, model, batch_size=64, epoch=4, epsilon=0.2):
         self.model = model
         self.batch_size = batch_size
         self.epsilon = epsilon
         self.epoch = epoch
-        self.optimizer_critic = optim.Adam(self.model.critic.parameters(), lr = self.lr)
-        self.optimizer_actor = optim.Adam(self.model.actor.parameters(), lr = self.lr)
         self.loss_criterion = nn.MSELoss()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
@@ -102,15 +104,15 @@ class Trainer :
             
             loss_critic = self.loss_criterion(valeur_pred.squeeze(), rewards)
             
-            self.optimizer_critic.zero_grad()
+            self.model.optimizer_critic.zero_grad()
             loss_critic.backward()
-            self.optimizer_critic.step()
+            self.model.optimizer_critic.step()
             
             _, log_proba_new, _ = self.model.forward(states, action=actions)
 
             ratio = torch.exp(log_proba_new - log_probas)
             loss_actor = -(torch.min(ratio * avantages,torch.clamp(ratio,1-self.epsilon, 1+self.epsilon) * avantages)).mean()
             
-            self.optimizer_actor.zero_grad()
+            self.model.optimizer_actor.zero_grad()
             loss_actor.backward()
-            self.optimizer_actor.step()
+            self.model.optimizer_actor.step()
