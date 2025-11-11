@@ -3,6 +3,7 @@ import pygame
 from sys import exit
 from numba import njit
 import random
+from agent_PPO import Agent
 
 pygame.init()
 
@@ -12,6 +13,8 @@ hauteur = 900
 terrain = pygame.display.set_mode((largeur,hauteur))
 pygame.display.set_caption("soccer")
 terrain_array = pygame.surfarray.array3d(terrain)
+
+training = True
 
 
 SPEED = 60
@@ -259,12 +262,14 @@ class Balle :
             self.tap = False
   
 class Game :
-    def __init__(self,largeur=700, hauteur=900):
+    def __init__(self,largeur=700, hauteur=900, joueurs = ("ia","ia"), training=True):
         self.frottement = 0.985
-
+        self.joueurs = joueurs
+        
+        self.agents = [Agent(team=0), Agent(team=1)]
+        self.training = training
         
         self.score = [0, 0]
-        
         
         self.largeur = largeur
         self.hauteur = hauteur
@@ -315,7 +320,22 @@ class Game :
                     
     def partie(self, terrain_array, bord):  
         while self.score[0] < 3 and self.score[1] < 3 :
-            self.coup()
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    exit()
+                    
+            affiche(self.largeur, self.hauteur, self.objets, self.score)
+            pygame.display.update()
+                    
+            if self.joueurs[self.tour] == "ia":
+                self.agents[self.tour].get_action(self) 
+                self.tour = (self.tour+1)%2
+                if training == False :
+                    clock.tick(1)
+            else :
+                self.coup()
+                
             while not np.all([_.vitesse == (0,0) for _ in self.objets]) :
                 pygame.event.pump()
                 for e in self.objets :
@@ -325,15 +345,23 @@ class Game :
                     but_val = self.objets[-1].but(largeur, hauteur)
                     if but_val != None :
                         self.score[but_val] += 1
+                        self.agents[but_val].fin(1)
+                        self.agents[but_val-1].fin(-1)
                         self.reset()
                         self.tour = but_val
+                    if training == False :
+                        affiche(self.largeur, self.hauteur, self.objets, self.score)
+                        pygame.display.update()
                     
-                    affiche(self.largeur, self.hauteur, self.objets, self.score)
-                    pygame.display.update()
-                    
-                clock.tick(SPEED)
-    
-game = Game()
+                if training == False :
+                    clock.tick(SPEED)
+
+if training == True :
+    while True :
+        game = Game()
+        game.partie(terrain_array, bord)
+        
+game = Game(joueurs = ("ia","ia"), training=False)
 game.partie(terrain_array, bord)
 
 pygame.quit()
