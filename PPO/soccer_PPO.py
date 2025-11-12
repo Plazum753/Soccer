@@ -4,6 +4,9 @@ from sys import exit
 from numba import njit
 import random
 from agent_PPO import Agent
+from info import plot
+
+# import cProfile, pstats
 
 pygame.init()
 
@@ -15,7 +18,6 @@ pygame.display.set_caption("soccer")
 terrain_array = pygame.surfarray.array3d(terrain)
 
 training = True
-
 
 SPEED = 60
 clock = pygame.time.Clock()
@@ -71,86 +73,107 @@ pygame.draw.rect(terrain,(25,220,25),(largeur*0.1,hauteur*0.1,largeur*0.8, haute
 pygame.draw.rect(terrain,(25,220,25),(largeur*0.35,hauteur*0.03,largeur*0.3, hauteur*0.94), border_radius=30)
 
 terrain_array = pygame.surfarray.array3d(terrain)
+terrain_array = np.array([[r for r,g,b in row] for row in terrain_array])
 bord = centre_piste(largeur,hauteur)
 
 @njit
-def choc_mur(va, a, ma, r, bord, terrain_array) :
-    # trouve le point le plus proche
-    mini = np.linalg.norm(bord[0] - a)
-    ind = 0
-    for i in range(1,len(bord)) :
-        if np.linalg.norm(bord[i] - a) < mini :
-            mini = np.linalg.norm(bord[i] - a)
-            ind = i
-    b = bord[ind]
+def choc_mur(p, r, v, bord, terrain_array) :
+    diff = p[:, None, :] - bord[None,: , :]
+    dist = np.sqrt(np.sum(diff**2, axis=2))
     
-    if mini > r :
-        return a, va
+    ind = np.argmin(dist, axis=1)
     
-    # séparer les deux objet
-    overlap = r - mini
-    direction = a - b
-    direction /= np.linalg.norm(direction)
+    mini = np.empty(len(p), dtype=np.float64)
+    for i in range(len(p)):
+        mini[i] = dist[i, ind[i]]        
+        
+    ind_collision = np.where(mini<r)
     
-    if np.all(terrain_array[int(a[0]), int(a[1])] == np.array([25,220,25])) : 
-        a += direction * overlap
-    else : # balle dans le mur
-        a -= direction * overlap
+    for objet, distance, b in zip(ind_collision[0], mini[ind_collision[0]], ind[ind_collision[0]]):
+        # séparer les deux objet
+        overlap = r[objet] - distance
+        direction = p[objet] - bord[b]
+        direction /= np.linalg.norm(direction)
+        
+        if terrain_array[int(p[objet][0]), int(p[objet][1])] == 25 : 
+            p[objet] += direction * overlap
+        else : # balle dans le mur
+            p[objet] -= direction * overlap
+        
+        # calcul le choc
+        n = (p[objet] - bord[b])
+        n /= np.linalg.norm(n)
+        t = np.array([-n[1],n[0]])
+        
+        vo_n = np.dot(v[objet],n)
+        vo_t = np.dot(v[objet], t)
+        
+        vo_n_new = - vo_n
+        
+        v[objet] = vo_n_new * n + vo_t * t
     
-    # calcul le choc
-    n = (a - b)
-    n /= np.linalg.norm(n)
-    t = np.array([-n[1],n[0]])
-    
-    va_n = np.dot(va,n)
-    va_t = np.dot(va, t)
-    
-    va_n_new = - va_n
-    
-    va_new = va_n_new * n + va_t * t
-    
-    return a, va_new
-
-choc_mur(np.array([1.0,1.0]),np.array([1.0,1.0]),1.0,1.0,bord,terrain_array)
+    return p, v
     
 @njit
-def calcul_choc(va, vb, a, b, ma, mb):
-    n = (a - b)
-    n /= np.linalg.norm(n)
-    t = np.array([-n[1],n[0]])
+def choc(p, r, m, v):
+    diff = p[:, None, :] - p[None,: , :] #(N,N,2)
+    dist = np.sqrt(np.sum(diff**2, axis=2)) #(N, N)
     
-    va_n = np.dot(va, n)
-    vb_n = np.dot(vb, n)
-    va_t = np.dot(va, t)
-    vb_t = np.dot(vb, t)
+    mask = dist < (r[:, None] + r [None, :]) # (N, N)
     
-    va_n_new = (2 * mb * vb_n + va_n * (ma - mb)) / (ma + mb)
-    vb_n_new = (2 * ma * va_n + vb_n * (mb - ma)) / (ma + mb)
+    i_idx, j_idx = np.where(np.triu(mask, 1))
     
-    va = va_n_new * n + va_t * t 
-    vb = vb_n_new * n + vb_t * t
-    
-    return va, vb
+    for i, j in zip(i_idx, j_idx) :
+        n = (p[i] - p[j])
+        n /= np.linalg.norm(n)
+        t = np.array([-n[1],n[0]])
+        
+        vi_n = np.dot(v[i], n)
+        vj_n = np.dot(v[j], n)
+        vi_t = np.dot(v[i], t)
+        vj_t = np.dot(v[j], t)
+        
+        vi_n_new = (2 * m[j] * vj_n + vi_n * (m[i] - m[j])) / (m[i] + m[j])
+        vj_n_new = (2 * m[i] * vi_n + vj_n * (m[j] - m[i])) / (m[i] + m[j])
+        
+        v[i] = vi_n_new * n + vi_t * t 
+        v[j] = vj_n_new * n + vj_t * t
+        
+        # séparer les deux objet
+        overlap = r[i] + r[j] - dist[i,j]
+        direction = p[i] - p[j]
+        direction /= np.linalg.norm(direction)
 
-calcul_choc(np.array([1.0,1.0]),np.array([1.0,1.0]),np.array([1.0,1.0]),np.array([1.0,1.0]),1.0,1.0)
+        p[i] += direction * overlap / 2
+        p[j] -= direction * overlap / 2
+    
+    return p, v
+
+print("chargement...")
+
+p = np.zeros((2,2), dtype=np.float64)
+r = np.zeros((2), dtype=np.float64)
+m = np.zeros((2), dtype=np.float64)
+v = np.zeros((2,2), dtype=np.float64)
+choc_mur(p, r, v, bord, terrain_array)
+choc(p, r, m, v)
     
 
 class Pion :
     def __init__(self, team, position):
-        self.position = pygame.Vector2(position[0], position[1])
-        self.vitesse = pygame.Vector2(0, 0)
+        self.position = np.array([position[0], position[1]], dtype=np.float64)
+        self.vitesse = np.array([0, 0], dtype=np.float64)
         self.poid = 0.5
         self.rayon = 25.0
-        self.tap = False
         self.team = team
         self.couleur = np.array([200,0,0]) if team == 0 else np.array([0,0,200])
     
     def image(self):
-        pygame.draw.circle(terrain, self.couleur, self.position, self.rayon)
-        pygame.draw.circle(terrain, self.couleur*1.2, self.position, self.rayon*0.8, width= 7)
+        pygame.draw.circle(terrain, self.couleur, self.position.astype(np.int16), self.rayon)
+        pygame.draw.circle(terrain, self.couleur*1.2, self.position.astype(np.int16), self.rayon*0.8, width= 7)
 
     def actif(self, objets, score):
-        pygame.draw.circle(terrain, (255,255,255), self.position, 32, 5)
+        pygame.draw.circle(terrain, (255,255,255), self.position.astype(np.int16), 32, 5)
         pygame.display.update()
 
         souris = None
@@ -187,86 +210,39 @@ class Pion :
     
     def deplacement(self, frottement):
         self.position += self.vitesse
-        self.vitesse *= frottement if self.vitesse.length_squared() > 0.05 else 0
-    
-    def choc(self, objets, bord, terrain_array):
-        a, va = choc_mur(np.array([self.vitesse.x, self.vitesse.y]), np.array([self.position.x, self.position.y]), self.poid, self.rayon, bord, terrain_array)
-        self.vitesse = pygame.Vector2(va[0], va[1])
-        self.position = pygame.Vector2(a[0],a[1])
-        
-        i = 0
-        for e in objets :
-            if e.rayon + self.rayon > (e.position - self.position).length() and e is not self and self.tap == False :
-                # séparer les deux objet
-                overlap = e.rayon + self.rayon - (e.position - self.position).length()
-                direction = (self.position - e.position).normalize()
-                self.position += direction * overlap / 2
-                e.position -= direction * overlap / 2
-                
-                # calcul force du choc
-                va, vb = calcul_choc(np.array([self.vitesse.x, self.vitesse.y]), np.array([e.vitesse.x, e.vitesse.y]), np.array([self.position.x, self.position.y]), np.array([e.position.x, e.position.y]), self.poid, e.poid)
-                self.vitesse = pygame.Vector2(va[0], va[1])
-                e.vitesse = pygame.Vector2(vb[0], vb[1])
-                e.tap = True
-            else :
-                i += 1
-        if i == len(objets) :
-            self.tap = False
+        self.vitesse *= frottement if np.dot(self.vitesse, self.vitesse) > 0.05 else 0
     
 class Balle :
     def __init__(self, largeur, hauteur):
-        self.position = pygame.Vector2(largeur/2,hauteur/2)
-        self.vitesse = pygame.Vector2(0, 0)
+        self.position = np.array([largeur/2,hauteur/2], dtype=np.float64)
+        self.vitesse = np.array([0, 0], dtype=np.float64)
         self.poid = 0.25
         self.rayon = 15.0
-        self.tap = False
 
     
     def image(self):
-        pygame.draw.circle(terrain, (255,255,255), self.position, self.rayon)
+        pygame.draw.circle(terrain, (255,255,255), self.position.astype(np.int16), self.rayon)
 
     def but(self, largeur, hauteur):
-        if largeur*0.35 < self.position.x < largeur*65 :
-            if self.position.y < hauteur*0.1 :
+        if largeur*0.35 < self.position[0] < largeur*65 :
+            if self.position[1] < hauteur*0.1 :
                 return 0
-            elif self.position.y > hauteur*0.9 :
+            elif self.position[1] > hauteur*0.9 :
                 return 1
         return None
     
     def deplacement(self, frottement):
         self.position += self.vitesse
-        self.vitesse *= frottement if self.vitesse.length_squared() > 0.05 else 0
-        
-    def choc(self, objets, bord, terrain_array):
-        a, va = choc_mur(np.array([self.vitesse.x, self.vitesse.y]), np.array([self.position.x, self.position.y]), self.poid, self.rayon, bord, terrain_array)
-        self.vitesse = pygame.Vector2(va[0], va[1])
-        self.position = pygame.Vector2(a[0],a[1])
-
-        i = 0
-        for e in objets :
-            if e.rayon + self.rayon > (e.position - self.position).length() and e is not self and self.tap == False :
-                # séparer les deux objet
-                overlap = e.rayon + self.rayon - (e.position - self.position).length()
-                direction = (self.position - e.position).normalize()
-                self.position += direction * overlap / 2
-                e.position -= direction * overlap / 2
-                
-                # calcul force du choc
-                va, vb = calcul_choc(np.array([self.vitesse.x, self.vitesse.y]), np.array([e.vitesse.x, e.vitesse.y]), np.array([self.position.x, self.position.y]), np.array([e.position.x, e.position.y]), self.poid, e.poid)
-                self.vitesse = pygame.Vector2(va[0], va[1])
-                e.vitesse = pygame.Vector2(vb[0], vb[1])
-                e.tap = True
-            else :
-                i += 1
-        if i == len(objets) :
-            self.tap = False
+        self.vitesse *= frottement if np.dot(self.vitesse, self.vitesse) > 0.05 else 0
   
 class Game :
     def __init__(self,largeur=700, hauteur=900, joueurs = ("ia","ia"), training=True, agents=None):
         self.frottement = 0.985
         self.joueurs = joueurs
         
-        self.agents = [Agent(team=0), Agent(team=1)] if agents == None else agents
+        self.n_tir = 0
+        
+        self.agents = [Agent(team=0, n_pions=1), Agent(team=1, n_pions=1)] if agents == None else agents
         self.training = training
         
         self.score = [0, 0]
@@ -286,17 +262,17 @@ class Game :
         
         pions_0 = []
         pions_0.append(Pion(0,(self.largeur*0.5,self.hauteur*0.3)))
-        for i in range(1,3):
-            pions_0.append(Pion(0,(self.largeur*(1/3)*i,self.hauteur*0.2)))
-        for i in range(2,4):
-            pions_0.append(Pion(0,(self.largeur*0.2*i,self.hauteur*0.1)))
+        # for i in range(1,3):
+        #     pions_0.append(Pion(0,(self.largeur*(1/3)*i,self.hauteur*0.2)))
+        # for i in range(2,4):
+        #     pions_0.append(Pion(0,(self.largeur*0.2*i,self.hauteur*0.1)))
         
         pions_1 = []
         pions_1.append(Pion(1,(self.largeur*0.5,self.hauteur*0.7)))
-        for i in range(1,3):
-            pions_1.append(Pion(1,(self.largeur*(1/3)*i,self.hauteur*0.8)))
-        for i in range(2,4):
-            pions_1.append(Pion(1,(self.largeur*0.2*i,self.hauteur*0.9)))
+        # for i in range(1,3):
+        #     pions_1.append(Pion(1,(self.largeur*(1/3)*i,self.hauteur*0.8)))
+        # for i in range(2,4):
+        #     pions_1.append(Pion(1,(self.largeur*0.2*i,self.hauteur*0.9)))
             
         self.balle = Balle(self.largeur,self.hauteur)
         
@@ -314,7 +290,7 @@ class Game :
                     pygame.event.pump()
                 souris = pygame.mouse.get_pos()
                 for e in self.pions[self.tour] :
-                    if (e.position.x - souris[0])**2 + (e.position.y - souris[1])**2 <= 625 : # 25**2 = 625
+                    if (e.position[0] - souris[0])**2 + (e.position[1] - souris[1])**2 <= 625 : # 25**2 = 625
                         self.tour = (self.tour+e.actif(self.objets, self.score))%2  
                         return
                     
@@ -324,9 +300,9 @@ class Game :
                 if event.type == pygame.QUIT:
                     pygame.quit()
                     exit()
-                    
-            affiche(self.largeur, self.hauteur, self.objets, self.score)
-            pygame.display.update()
+            
+            # affiche(self.largeur, self.hauteur, self.objets, self.score)
+            # pygame.display.update()
                     
             if self.joueurs[self.tour] == "ia":
                 self.agents[self.tour].get_action(self) 
@@ -336,35 +312,62 @@ class Game :
             else :
                 self.coup()
                 
-            while not np.all([_.vitesse == (0,0) for _ in self.objets]) :
+            self.n_tir += 1
+                
+            while any(np.linalg.norm(o.vitesse) != 0 for o in self.objets):
                 pygame.event.pump()
                 for e in self.objets :
                     e.deplacement(self.frottement)
-                    e.choc(self.objets, bord, terrain_array)
+
+                p = np.array([o.position for o in self.objets], dtype=np.float64)
+                r = np.array([o.rayon for o in self.objets], dtype=np.float64)
+                m = np.array([o.poid for o in self.objets], dtype=np.float64)
+                v = np.array([o.vitesse for o in self.objets], dtype=np.float64)
+                
+                p, v = choc_mur(p, r, v, bord, terrain_array)
+                p, v = choc(p, r, m, v)
                     
-                    but_val = self.objets[-1].but(largeur, hauteur)
-                    if but_val != None :
-                        self.score[but_val] += 1
-                        if training == True :
-                            self.agents[but_val].fin(1)
-                            self.agents[but_val-1].fin(-1)
-                            print()
-                        self.reset()
-                        self.tour = but_val
-                    if training == False :
-                        affiche(self.largeur, self.hauteur, self.objets, self.score)
-                        pygame.display.update()
+                for i in range(len(self.objets)) :
+                    self.objets[i].position = p[i]
+                    self.objets[i].vitesse = v[i]
+                
+                
+                but_val = self.objets[-1].but(largeur, hauteur)
+                if but_val != None :
+                    
+                    self.score[but_val] += 1
+                    if training == True :
+                        n_tir_plot.append(self.n_tir)
+                        plot(n_tir_plot)
+                        self.n_tir = 0
+                        self.agents[but_val-1].fin(1)
+                        self.agents[but_val].fin(-1)
+                        print()
+                    self.reset()
+                    self.tour = but_val
+                    
+                if training == False :
+                    affiche(self.largeur, self.hauteur, self.objets, self.score)
+                    pygame.display.update()
                     
                 if training == False :
                     clock.tick(SPEED)
 
+# profiler = cProfile.Profile()
+# profiler.enable()
+
 if training == True :
+    n_tir_plot = []
+    agents = [Agent(team=0, n_pions=1), Agent(team=1, n_pions=1)]
     while True :
-        agents = [Agent(team=0), Agent(team=1)]
         game = Game(agents=agents)
         game.partie(terrain_array, bord)
+        # profiler.disable()
+        # stats = pstats.Stats(profiler).sort_stats('cumtime')
+        # stats.print_stats(50)
         
-game = Game(joueurs = ("ia","ia"), training=False)
+        
+game = Game(joueurs = ("ia","hu"), training=False)
 game.partie(terrain_array, bord)
 
 pygame.quit()

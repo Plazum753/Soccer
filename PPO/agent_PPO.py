@@ -1,20 +1,19 @@
 from model_PPO import Model, Trainer
 import torch
-import pygame
 import numpy as np
 
 class Agent:
     def __init__(self, gamma=0.99, batch_size=64, team=0, n_pions=5):
         self.team = team
-
+        self.n_pions = n_pions
         self.n_buts = 0
         self.n_pions = n_pions
         self.gamma = gamma
         self.batch_size = batch_size
         self.memory = []
         self.memory_game = []
-        self.model = Model(self.n_pions*4+2, 32+self.team*32, 4+self.team*6)
-        self.trainer = Trainer(self.model, batch_size=self.batch_size)
+        self.model = Model(self.n_pions*4+2, 32+self.team*32, 3+self.team*3, n_pions=n_pions)
+        self.trainer = Trainer(self.model, batch_size=self.batch_size, n_pions=n_pions)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         self.load(filename="save"+str(self.team)+".pth")
@@ -27,7 +26,7 @@ class Agent:
     def get_action(self, game) :
         state = self.get_state(game)
         
-        action, log_proba, valeur = self.model.forward(state)
+        action, log_proba, valeur = self.model.forward(state, self.n_pions)
         log_proba = log_proba.squeeze(0)
         valeur = valeur.squeeze(0)
         
@@ -40,7 +39,7 @@ class Agent:
         
         pion, angle, vitesse = pion.cpu().item(), angle.cpu().item(), vitesse.cpu().item()
         
-        game.objets[pion + self.team * self.n_pions].vitesse = pygame.Vector2(vitesse * np.cos(angle), vitesse * np.sin(angle))
+        game.objets[pion + self.team * self.n_pions].vitesse = np.array([vitesse * np.cos(angle), vitesse * np.sin(angle)], dtype=np.float64)
 
     def fin(self, reward) :
         for e in self.memory_game :

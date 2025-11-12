@@ -75,13 +75,14 @@ class Model :
         return (action, log_proba, valeur)
         
 class Trainer :
-    def __init__(self, model, batch_size=64, epoch=4, epsilon=0.2):
+    def __init__(self, model, batch_size=64, epoch=4, epsilon=0.2, n_pions=5):
         self.model = model
         self.batch_size = batch_size
         self.epsilon = epsilon
         self.epoch = epoch
         self.loss_criterion = nn.MSELoss()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.n_pions = n_pions
     
     def train_step(self, batch):
         idx = torch.randperm(self.batch_size)
@@ -100,7 +101,7 @@ class Trainer :
             avantages = (rewards - valeurs).detach()
         
         for i in range(self.epoch):
-            _, _, valeur_pred = self.model.forward(states, action=actions)
+            _, _, valeur_pred = self.model.forward(states, action=actions, n_pions=self.n_pions)
             
             loss_critic = self.loss_criterion(valeur_pred.squeeze(), rewards)
             
@@ -108,7 +109,7 @@ class Trainer :
             loss_critic.backward()
             self.model.optimizer_critic.step()
             
-            _, log_proba_new, _ = self.model.forward(states, action=actions)
+            _, log_proba_new, _ = self.model.forward(states, action=actions, n_pions=self.n_pions)
 
             ratio = torch.exp(log_proba_new - log_probas)
             loss_actor = -(torch.min(ratio * avantages,torch.clamp(ratio,1-self.epsilon, 1+self.epsilon) * avantages)).mean()
