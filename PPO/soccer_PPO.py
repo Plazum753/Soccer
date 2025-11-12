@@ -75,9 +75,9 @@ pygame.draw.rect(terrain,(25,220,25),(largeur*0.35,hauteur*0.03,largeur*0.3, hau
 terrain_array = pygame.surfarray.array3d(terrain)
 terrain_array = np.array([[r for r,g,b in row] for row in terrain_array])
 bord = centre_piste(largeur,hauteur)
-
+    
 @njit
-def choc_mur(p, r, v, bord, terrain_array) :
+def deplacement(p, r, m, v, bord, terrain_array):
     diff = p[:, None, :] - bord[None,: , :]
     dist = np.sqrt(np.sum(diff**2, axis=2))
     
@@ -111,11 +111,9 @@ def choc_mur(p, r, v, bord, terrain_array) :
         vo_n_new = - vo_n
         
         v[objet] = vo_n_new * n + vo_t * t
+        
+# =============================================================================
     
-    return p, v
-    
-@njit
-def choc(p, r, m, v):
     diff = p[:, None, :] - p[None,: , :] #(N,N,2)
     dist = np.sqrt(np.sum(diff**2, axis=2)) #(N, N)
     
@@ -146,6 +144,16 @@ def choc(p, r, m, v):
 
         p[i] += direction * overlap / 2
         p[j] -= direction * overlap / 2
+        
+    # =============================================================================
+    
+    p += v
+    
+    mask = np.sum(v**2, axis=1) < 0.05
+    idx = np.where(mask)
+    
+    v[idx] *= 0
+    v *= 0.985
     
     return p, v
 
@@ -155,8 +163,7 @@ p = np.zeros((2,2), dtype=np.float64)
 r = np.zeros((2), dtype=np.float64)
 m = np.zeros((2), dtype=np.float64)
 v = np.zeros((2,2), dtype=np.float64)
-choc_mur(p, r, v, bord, terrain_array)
-choc(p, r, m, v)
+deplacement(p, r, m, v, bord, terrain_array)
     
 
 class Pion :
@@ -208,9 +215,6 @@ class Pion :
         self.vitesse = vecteur
         return 1
     
-    def deplacement(self, frottement):
-        self.position += self.vitesse
-        self.vitesse *= frottement if np.dot(self.vitesse, self.vitesse) > 0.05 else 0
     
 class Balle :
     def __init__(self, largeur, hauteur):
@@ -230,14 +234,10 @@ class Balle :
             elif self.position[1] > hauteur*0.9 :
                 return 1
         return None
-    
-    def deplacement(self, frottement):
-        self.position += self.vitesse
-        self.vitesse *= frottement if np.dot(self.vitesse, self.vitesse) > 0.05 else 0
   
+    
 class Game :
     def __init__(self,largeur=700, hauteur=900, joueurs = ("ia","ia"), training=True, agents=None):
-        self.frottement = 0.985
         self.joueurs = joueurs
         
         self.n_tir = 0
@@ -256,6 +256,9 @@ class Game :
         pygame.display.update()
         
         self.tour = random.randint(0, 1)
+        
+        affiche(self.largeur, self.hauteur, self.objets, self.score)
+        pygame.display.update()
     
     def reset(self) :
         self.pions = []
@@ -300,9 +303,6 @@ class Game :
                 if event.type == pygame.QUIT:
                     pygame.quit()
                     exit()
-            
-            # affiche(self.largeur, self.hauteur, self.objets, self.score)
-            # pygame.display.update()
                     
             if self.joueurs[self.tour] == "ia":
                 self.agents[self.tour].get_action(self) 
@@ -313,19 +313,16 @@ class Game :
                 self.coup()
                 
             self.n_tir += 1
-                
+
             while any(np.linalg.norm(o.vitesse) != 0 for o in self.objets):
                 pygame.event.pump()
-                for e in self.objets :
-                    e.deplacement(self.frottement)
 
                 p = np.array([o.position for o in self.objets], dtype=np.float64)
                 r = np.array([o.rayon for o in self.objets], dtype=np.float64)
                 m = np.array([o.poid for o in self.objets], dtype=np.float64)
                 v = np.array([o.vitesse for o in self.objets], dtype=np.float64)
                 
-                p, v = choc_mur(p, r, v, bord, terrain_array)
-                p, v = choc(p, r, m, v)
+                p, v = deplacement(p, r, m, v, bord, terrain_array)
                     
                 for i in range(len(self.objets)) :
                     self.objets[i].position = p[i]
@@ -367,7 +364,7 @@ if training == True :
         # stats.print_stats(50)
         
         
-game = Game(joueurs = ("ia","hu"), training=False)
+game = Game(joueurs = ("hu","ia"), training=False)
 game.partie(terrain_array, bord)
 
 pygame.quit()

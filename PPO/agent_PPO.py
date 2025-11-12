@@ -3,7 +3,7 @@ import torch
 import numpy as np
 
 class Agent:
-    def __init__(self, gamma=0.99, batch_size=64, team=0, n_pions=5):
+    def __init__(self, gamma=0.7, batch_size=64, team=0, n_pions=5):
         self.team = team
         self.n_pions = n_pions
         self.n_buts = 0
@@ -12,7 +12,7 @@ class Agent:
         self.batch_size = batch_size
         self.memory = []
         self.memory_game = []
-        self.model = Model(self.n_pions*4+2, 32+self.team*32, 3+self.team*3, n_pions=n_pions)
+        self.model = Model(self.n_pions*4+2, 64+self.team*64, 6+self.team*6, n_pions=n_pions)
         self.trainer = Trainer(self.model, batch_size=self.batch_size, n_pions=n_pions)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
@@ -42,9 +42,10 @@ class Agent:
         game.objets[pion + self.team * self.n_pions].vitesse = np.array([vitesse * np.cos(angle), vitesse * np.sin(angle)], dtype=np.float64)
 
     def fin(self, reward) :
-        for e in self.memory_game :
-            self.memory.append(e+[reward])
+        for i in range(len(self.memory_game)) :
+            self.memory.append(self.memory_game[i]+[reward*(self.gamma**(len(self.memory_game)-1-i))])
         self.memory_game = []
+        
         if len(self.memory) > self.batch_size :
             self.trainer.train_step(self.memory)
             self.memory = []
@@ -60,7 +61,7 @@ class Agent:
         'optimizer_critic': self.model.optimizer_critic.state_dict(),
         'optimizer_actor': self.model.optimizer_actor.state_dict(),
         "n_buts": self.n_buts}, filename)
-        print(f"💾 Modèle sauvegardé dans {filename}")
+        print(f"💾 Modèle {str(self.team)} sauvegardé dans {filename}")
         
     def load(self, filename="save.pth"):
         try:

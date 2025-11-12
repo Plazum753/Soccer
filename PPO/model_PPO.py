@@ -5,7 +5,7 @@ import torch.distributions as dist
 import torch.nn.functional as F
 
 class Model :
-    def __init__(self, input_size, hidden_size, n_hidden_layers, n_pions=5, lr=1e-4) :
+    def __init__(self, input_size, hidden_size, n_hidden_layers, n_pions=5, lr=1e-5) :
         self.lr = lr
         
         layer_actor = []

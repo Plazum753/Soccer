@@ -8,9 +8,10 @@ def plot(n_tir):
     display.display(plt.gcf())
     plt.clf()
     plt.title('Training...')
-    plt.xlabel('Number of games')
+    plt.xlabel('Nombre de buts')
     plt.ylabel('nombre de tir')
     plt.plot(n_tir,"g*", label="nombre de tir")
     plt.xlim(left=0)
+    plt.ylim(ymin=0)
     plt.text(len(n_tir)-1,n_tir[-1],str(n_tir[-1]))
 
