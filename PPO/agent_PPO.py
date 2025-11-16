@@ -12,7 +12,7 @@ class Agent:
         self.batch_size = batch_size
         self.memory = []
         self.memory_game = []
-        self.model = Model(self.n_pions*4+2, 64+self.team*64, 6+self.team*6, n_pions=n_pions)
+        self.model = Model(self.n_pions*4+2, 256, 3, n_pions=n_pions)
         self.trainer = Trainer(self.model, batch_size=self.batch_size, n_pions=n_pions)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
@@ -30,20 +30,28 @@ class Agent:
         log_proba = log_proba.squeeze(0)
         valeur = valeur.squeeze(0)
         
-        pion, angle, vitesse = action
-        pion, angle, vitesse = pion.squeeze(0), angle.squeeze(0), vitesse.squeeze(0)
-        action = (pion, angle, vitesse)
+        pion, vx, vy = action
+        pion, vx, vy = pion.squeeze(0), vx.squeeze(0), vy.squeeze(0)
+        action = (pion, vx, vy)
         
-        self.memory_game.append([state, action, valeur, log_proba])
-        # batch = (states, actions, valeurs , log_probas, rewards)
+        self.memory_game.append([state, action, valeur, log_proba, 0])
         
-        pion, angle, vitesse = pion.cpu().item(), angle.cpu().item(), vitesse.cpu().item()
+        pion, vx, vy = pion.cpu().item(), vx.cpu().item(), vy.cpu().item()
+        #print(torch.exp(log_proba))
         
-        game.objets[pion + self.team * self.n_pions].vitesse = np.array([vitesse * np.cos(angle), vitesse * np.sin(angle)], dtype=np.float64)
+        game.objets[pion + self.team * self.n_pions].vitesse = np.array([vx, vy], dtype=np.float64)
+        
+    def reward(self, r, gamma=True):
+        if gamma == True :
+            for i in range(len(self.memory_game)) :
+                self.memory_game[i][-1] += r * self.gamma**(len(self.memory_game)-1-i)
+        elif self.memory_game != [] :
+            self.memory_game[-1][-1] += r
 
     def fin(self, reward) :
         for i in range(len(self.memory_game)) :
-            self.memory.append(self.memory_game[i]+[reward*(self.gamma**(len(self.memory_game)-1-i))])
+            if abs(self.memory_game[i][-1]) > 0.2 :
+                self.memory.append(self.memory_game[i])
         self.memory_game = []
         
         if len(self.memory) > self.batch_size :
@@ -79,3 +87,4 @@ class Agent:
         except Exception as e:
             print("❌ Erreur lors du chargement du model :", e)
             return None
+        

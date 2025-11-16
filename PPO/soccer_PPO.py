@@ -75,9 +75,12 @@ pygame.draw.rect(terrain,(25,220,25),(largeur*0.35,hauteur*0.03,largeur*0.3, hau
 terrain_array = pygame.surfarray.array3d(terrain)
 terrain_array = np.array([[r for r,g,b in row] for row in terrain_array])
 bord = centre_piste(largeur,hauteur)
+
+texte("Chargement...",(350,400),taille=50)
+pygame.display.update()
     
 @njit
-def deplacement(p, r, m, v, bord, terrain_array):
+def deplacement(p, r, m, v, bord, terrain_array, largeur, hauteur):
     diff = p[:, None, :] - bord[None,: , :]
     dist = np.sqrt(np.sum(diff**2, axis=2))
     
@@ -85,24 +88,33 @@ def deplacement(p, r, m, v, bord, terrain_array):
     
     mini = np.empty(len(p), dtype=np.float64)
     for i in range(len(p)):
-        mini[i] = dist[i, ind[i]]        
+        mini[i] = dist[i, ind[i]]
         
-    ind_collision = np.where(mini<r)
+    mask = mini < r
+    x = min(max(int(p[-1, 0]),0),largeur-1)
+    y = min(max(int(p[-1, 1]),0),hauteur-1)
+    if terrain_array[x, y] != 25 : # si balle sortie
+        mask[-1] += 1
+    
+    ind_collision = np.where(mask)
     
     for objet, distance, b in zip(ind_collision[0], mini[ind_collision[0]], ind[ind_collision[0]]):
         # séparer les deux objet
-        overlap = r[objet] - distance
+        overlap = abs(r[objet] - distance)
         direction = p[objet] - bord[b]
-        direction /= np.linalg.norm(direction)
+        direction /= np.linalg.norm(direction) + 1e-15
         
-        if terrain_array[int(p[objet][0]), int(p[objet][1])] == 25 : 
+        x = min(max(int(p[objet,0]),0),largeur-1)
+        y = min(max(int(p[objet,1]),0),hauteur-1)
+        
+        if terrain_array[x, y] == 25 : 
             p[objet] += direction * overlap
         else : # balle dans le mur
             p[objet] -= direction * overlap
         
         # calcul le choc
         n = (p[objet] - bord[b])
-        n /= np.linalg.norm(n)
+        n /= np.linalg.norm(n) + 1e-15
         t = np.array([-n[1],n[0]])
         
         vo_n = np.dot(v[objet],n)
@@ -140,7 +152,7 @@ def deplacement(p, r, m, v, bord, terrain_array):
         # séparer les deux objet
         overlap = r[i] + r[j] - dist[i,j]
         direction = p[i] - p[j]
-        direction /= np.linalg.norm(direction)
+        direction /= np.linalg.norm(direction) + 1e-15
 
         p[i] += direction * overlap / 2
         p[j] -= direction * overlap / 2
@@ -149,10 +161,8 @@ def deplacement(p, r, m, v, bord, terrain_array):
     
     p += v
     
-    mask = np.sum(v**2, axis=1) < 0.05
-    idx = np.where(mask)
-    
-    v[idx] *= 0
+    mask = np.sum(v**2, axis=1) < 0.05    
+    v[mask] = 0
     v *= 0.985
     
     return p, v
@@ -163,14 +173,14 @@ p = np.zeros((2,2), dtype=np.float64)
 r = np.zeros((2), dtype=np.float64)
 m = np.zeros((2), dtype=np.float64)
 v = np.zeros((2,2), dtype=np.float64)
-deplacement(p, r, m, v, bord, terrain_array)
+deplacement(p, r, m, v, bord, terrain_array,1,1)
     
 
 class Pion :
     def __init__(self, team, position):
         self.position = np.array([position[0], position[1]], dtype=np.float64)
         self.vitesse = np.array([0, 0], dtype=np.float64)
-        self.poid = 0.5
+        self.poid = 1.0
         self.rayon = 25.0
         self.team = team
         self.couleur = np.array([200,0,0]) if team == 0 else np.array([0,0,200])
@@ -220,7 +230,7 @@ class Balle :
     def __init__(self, largeur, hauteur):
         self.position = np.array([largeur/2,hauteur/2], dtype=np.float64)
         self.vitesse = np.array([0, 0], dtype=np.float64)
-        self.poid = 0.25
+        self.poid = 0.5
         self.rayon = 15.0
 
     
@@ -228,7 +238,7 @@ class Balle :
         pygame.draw.circle(terrain, (255,255,255), self.position.astype(np.int16), self.rayon)
 
     def but(self, largeur, hauteur):
-        if largeur*0.35 < self.position[0] < largeur*65 :
+        if largeur*0.35 < self.position[0] < largeur*0.65 :
             if self.position[1] < hauteur*0.1 :
                 return 0
             elif self.position[1] > hauteur*0.9 :
@@ -239,8 +249,6 @@ class Balle :
 class Game :
     def __init__(self,largeur=700, hauteur=900, joueurs = ("ia","ia"), training=True, agents=None):
         self.joueurs = joueurs
-        
-        self.n_tir = 0
         
         self.agents = [Agent(team=0, n_pions=1), Agent(team=1, n_pions=1)] if agents == None else agents
         self.training = training
@@ -282,6 +290,9 @@ class Game :
         self.pions = [pions_0, pions_1]
         self.objets = pions_0+pions_1+[self.balle]
         
+        self.n_tir = 0
+        self.n_touches = 0
+        
     def coup(self):
         while True :
             for event in pygame.event.get():
@@ -303,6 +314,10 @@ class Game :
                 if event.type == pygame.QUIT:
                     pygame.quit()
                     exit()
+
+            if training == False :
+                affiche(self.largeur, self.hauteur, self.objets, self.score)
+                pygame.display.update()
                     
             if self.joueurs[self.tour] == "ia":
                 self.agents[self.tour].get_action(self) 
@@ -313,6 +328,8 @@ class Game :
                 self.coup()
                 
             self.n_tir += 1
+            
+            balle_old = self.objets[-1].position[1]
 
             while any(np.linalg.norm(o.vitesse) != 0 for o in self.objets):
                 pygame.event.pump()
@@ -322,7 +339,7 @@ class Game :
                 m = np.array([o.poid for o in self.objets], dtype=np.float64)
                 v = np.array([o.vitesse for o in self.objets], dtype=np.float64)
                 
-                p, v = deplacement(p, r, m, v, bord, terrain_array)
+                p, v = deplacement(p, r, m, v, bord, terrain_array, self.largeur, self.hauteur)
                     
                 for i in range(len(self.objets)) :
                     self.objets[i].position = p[i]
@@ -335,36 +352,44 @@ class Game :
                     self.score[but_val] += 1
                     if training == True :
                         n_tir_plot.append(self.n_tir)
-                        plot(n_tir_plot)
-                        self.n_tir = 0
+                        n_touches_plot.append(self.n_touches)
+                        self.agents[but_val-1].reward(1)
+                        self.agents[but_val].reward(-1)
                         self.agents[but_val-1].fin(1)
                         self.agents[but_val].fin(-1)
                         print()
                     self.reset()
                     self.tour = but_val
                     
-                if training == False :
+                if training == False : 
                     affiche(self.largeur, self.hauteur, self.objets, self.score)
                     pygame.display.update()
-                    
-                if training == False :
                     clock.tick(SPEED)
+            
+            
+            if training == True :
+                if balle_old != self.objets[-1].position[1] :
+                    self.agents[self.tour-1].reward(0.2, gamma=False)
+                    self.n_touches += 1
 
 # profiler = cProfile.Profile()
 # profiler.enable()
 
 if training == True :
     n_tir_plot = []
+    n_touches_plot = []
     agents = [Agent(team=0, n_pions=1), Agent(team=1, n_pions=1)]
     while True :
         game = Game(agents=agents)
         game.partie(terrain_array, bord)
+        plot(n_tir_plot, n_touches_plot)
+        
         # profiler.disable()
         # stats = pstats.Stats(profiler).sort_stats('cumtime')
         # stats.print_stats(50)
         
         
-game = Game(joueurs = ("hu","ia"), training=False)
+game = Game(joueurs = ("ia","hu"), training=False)
 game.partie(terrain_array, bord)
 
 pygame.quit()

@@ -5,7 +5,7 @@ import torch.distributions as dist
 import torch.nn.functional as F
 
 class Model :
-    def __init__(self, input_size, hidden_size, n_hidden_layers, n_pions=5, lr=1e-5) :
+    def __init__(self, input_size, hidden_size, n_hidden_layers, n_pions=5, lr=1e-4) :
         self.lr = lr
         
         layer_actor = []
@@ -13,20 +13,16 @@ class Model :
         layer_actor.append(nn.ReLU())
         for i in range(1, n_hidden_layers):
             layer_actor.append(nn.Linear(hidden_size, hidden_size))
-            if i%5==0 :
-                layer_actor.append(nn.LayerNorm(hidden_size))
             layer_actor.append(nn.ReLU())
         layer_actor.append(nn.Linear(hidden_size,n_pions+4))
         
         self.actor = nn.Sequential(*layer_actor)
-        
+
         layer_critic = []
         layer_critic.append(nn.Linear(input_size, hidden_size))
         layer_critic.append(nn.ReLU())
         for i in range(1,n_hidden_layers):
             layer_critic.append(nn.Linear(hidden_size, hidden_size))
-            if i%5==0 :
-                layer_critic.append(nn.LayerNorm(hidden_size))
             layer_critic.append(nn.ReLU())
         layer_critic.append(nn.Linear(hidden_size,1))
         
@@ -48,29 +44,43 @@ class Model :
             out_actor = out_actor.unsqueeze(0)
                     
         pions = out_actor[:, :n_pions]
-        angle = out_actor[:, n_pions:n_pions+2]
-        vitesse = out_actor[:, -2:]
+        vx = out_actor[:, -4:-2]        
+        vy = out_actor[:, -2:]
+        pions = torch.nan_to_num(pions, nan=0.0, posinf=1e3, neginf=-1e3)
+        vx = torch.nan_to_num(vx, nan=0.0, posinf=1e3, neginf=-1e3)
+        vy = torch.nan_to_num(vy, nan=0.0, posinf=1e3, neginf=-1e3)
         
         pions_prob = dist.Categorical(logits=pions)
-        pion = pions_prob.sample() if action == None else action[0] 
+        pion = pions_prob.sample() if action is None else action[0] 
         log_prob_pion = pions_prob.log_prob(pion)
         
-        sigma_angle = F.softplus(angle[:, 1]) + 1e-6 # empêche l'angle d'être négatif ou trop proche de 0
-        normal_angle = dist.Normal(angle[:, 0], sigma_angle)
-        epsilon_angle = torch.randn_like(sigma_angle) 
-        angle_choix = angle[:, 0] + sigma_angle * epsilon_angle if action == None else action[1] 
-        log_prob_angle = normal_angle.log_prob(angle_choix)
+        sigma_vx = F.softplus(vx[:, 1]) + 1e-3
+        normal_vx = dist.Normal(vx[:, 0], sigma_vx)
+        epsilon_vx = torch.randn_like(sigma_vx)
+        vx_choix = vx[:, 0] + sigma_vx * epsilon_vx if action is None else action[1]
+        log_prob_vx = normal_vx.log_prob(vx_choix)
         
-        sigma_vitesse = F.softplus(vitesse[:, 1]) + 1e-6
-        normal_vitesse = dist.Normal(vitesse[:, 0], sigma_vitesse)
-        epsilon_vitesse = torch.randn_like(sigma_vitesse)
-        vitesse_choix = vitesse[:, 0] + sigma_vitesse * epsilon_vitesse if action == None else action[2] 
-        log_prob_vitesse = normal_vitesse.log_prob(vitesse_choix)
-        vitesse_choix = 19 * torch.sigmoid(vitesse_choix) + 1
+        sigma_vy = F.softplus(vy[:, 1]) + 1e-3
+        normal_vy = dist.Normal(vy[:, 0], sigma_vy)
+        epsilon_vy = torch.randn_like(sigma_vy)
+        vy_choix = vy[:, 0] + sigma_vy * epsilon_vy if action is None else action[2]
+        log_prob_vy = normal_vy.log_prob(vy_choix)
         
-        log_proba = log_prob_pion + log_prob_angle + log_prob_vitesse
+        vx_choix = 20 * torch.tanh(vx_choix)
+        vy_choix = 20 * torch.tanh(vy_choix)
         
-        action = (pion, angle_choix, vitesse_choix)
+        norme = torch.sqrt(vx_choix**2 + vy_choix**2)
+        mask = norme < 1
+        vx_choix[mask] /= norme[mask] + 1e-15
+        vy_choix[mask] /= norme[mask] + 1e-15
+
+        mask = norme > 20
+        vx_choix[mask] /= norme[mask]/20
+        vy_choix[mask] /= norme[mask]/20
+        
+        log_proba = log_prob_pion + log_prob_vx + log_prob_vy
+        
+        action = (pion, vx_choix, vy_choix)
         
         return (action, log_proba, valeur)
         
@@ -93,9 +103,9 @@ class Trainer :
         rewards = torch.tensor([batch[i][4] for i in idx], dtype=torch.float32, device=self.device)
         
         pions = torch.stack([batch[i][1][0] for i in idx]).to(self.device).detach()
-        angles = torch.stack([batch[i][1][1] for i in idx]).to(self.device).detach()
-        vitesses = torch.stack([batch[i][1][2] for i in idx]).to(self.device).detach()
-        actions = (pions, angles, vitesses)
+        vx = torch.stack([batch[i][1][1] for i in idx]).to(self.device).detach()
+        vy = torch.stack([batch[i][1][2] for i in idx]).to(self.device).detach()
+        actions = (pions, vx, vy)
         
         with torch.no_grad() :
             avantages = (rewards - valeurs).detach()
