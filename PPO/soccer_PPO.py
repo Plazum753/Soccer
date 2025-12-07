@@ -78,7 +78,7 @@ bord = centre_piste(largeur,hauteur)
 
 texte("Chargement...",(350,400),taille=50)
 pygame.display.update()
-    
+
 @njit
 def deplacement(p, r, m, v, bord, terrain_array, largeur, hauteur):
     diff = p[:, None, :] - bord[None,: , :]
@@ -231,7 +231,7 @@ class Balle :
         self.position = np.array([largeur/2,hauteur/2], dtype=np.float64)
         self.vitesse = np.array([0, 0], dtype=np.float64)
         self.poid = 0.5
-        self.rayon = 15.0
+        self.rayon = 100#15.0
 
     
     def image(self):
@@ -239,10 +239,10 @@ class Balle :
 
     def but(self, largeur, hauteur):
         if largeur*0.35 < self.position[0] < largeur*0.65 :
-            if self.position[1] < hauteur*0.1 :
-                return 0
-            elif self.position[1] > hauteur*0.9 :
+            if self.position[1] < hauteur*0.2 :#0.1
                 return 1
+            elif self.position[1] > hauteur*0.8 :#0.9
+                return 0
         return None
   
     
@@ -330,6 +330,12 @@ class Game :
             self.n_tir += 1
             
             balle_old = self.objets[-1].position[1]
+            
+            # dist_old = self.objets[-1].position - self.objets[(self.tour+1)%2].position
+            # dist_old = np.dot(dist_old, dist_old)
+            
+            # affiche(self.largeur, self.hauteur, self.objets, self.score)
+            # pygame.display.update()
 
             while any(np.linalg.norm(o.vitesse) != 0 for o in self.objets):
                 pygame.event.pump()
@@ -349,17 +355,20 @@ class Game :
                 but_val = self.objets[-1].but(largeur, hauteur)
                 if but_val != None :
                     
-                    self.score[but_val] += 1
+                    self.score[(but_val+1)%2] += 1
                     if training == True :
                         n_tir_plot.append(self.n_tir)
                         n_touches_plot.append(self.n_touches)
-                        self.agents[but_val-1].reward(1)
-                        self.agents[but_val].reward(-1)
-                        self.agents[but_val-1].fin(1)
-                        self.agents[but_val].fin(-1)
+                        if self.agents[but_val].memory_game :
+                            self.agents[but_val].memory_game[-1][-1] += 1 # reward
+                        if self.agents[but_val-1].memory_game :
+                            self.agents[but_val-1].memory_game[-1][-1] -= 1 # reward
+                        self.agents[but_val].fin(1)
+                        self.agents[but_val-1].fin(-1)
                         print()
+                    
                     self.reset()
-                    self.tour = but_val
+                    self.tour = (but_val+1)%2
                     
                 if training == False : 
                     affiche(self.largeur, self.hauteur, self.objets, self.score)
@@ -367,11 +376,21 @@ class Game :
                     clock.tick(SPEED)
             
             
-            if training == True :
+            if training == True : 
                 if balle_old != self.objets[-1].position[1] :
-                    self.agents[self.tour-1].reward(0.2, gamma=False)
+                    if self.agents[self.tour-1].memory_game :
+                        self.agents[self.tour-1].memory_game[-1][-1] += 1 
                     self.n_touches += 1
-
+                    
+                # dist = self.objets[-1].position - self.objets[(self.tour+1)%2].position
+                # dist = np.dot(dist,dist)
+                # if dist < dist_old :
+                #     if self.agents[self.tour-1].memory_game :
+                #         self.agents[self.tour-1].memory_game[-1][-1] += 0.3
+                # else :
+                #     if self.agents[self.tour-1].memory_game :
+                #         self.agents[self.tour-1].memory_game[-1][-1] -= 0.3
+                
 # profiler = cProfile.Profile()
 # profiler.enable()
 

@@ -3,16 +3,17 @@ import torch
 import numpy as np
 
 class Agent:
-    def __init__(self, gamma=0.7, batch_size=64, team=0, n_pions=5):
+    def __init__(self, gamma=0.7, lambda_=0.95, batch_size=256, team=0, n_pions=5):
         self.team = team
+        self.gamma = gamma
+        self.lambda_ = lambda_
         self.n_pions = n_pions
         self.n_buts = 0
         self.n_pions = n_pions
-        self.gamma = gamma
         self.batch_size = batch_size
         self.memory = []
         self.memory_game = []
-        self.model = Model(self.n_pions*4+2, 256, 3, n_pions=n_pions)
+        self.model = Model(self.n_pions*4+2, 256, 3, n_pions=n_pions, lr=1e-5*(10*self.team))
         self.trainer = Trainer(self.model, batch_size=self.batch_size, n_pions=n_pions)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
@@ -26,39 +27,62 @@ class Agent:
     def get_action(self, game) :
         state = self.get_state(game)
         
-        action, log_proba, valeur = self.model.forward(state, self.n_pions)
+        with torch.no_grad():
+            action, log_proba, valeur, _ = self.model.forward(state, self.n_pions, training=False)
         log_proba = log_proba.squeeze(0)
         valeur = valeur.squeeze(0)
         
-        pion, vx, vy = action
-        pion, vx, vy = pion.squeeze(0), vx.squeeze(0), vy.squeeze(0)
-        action = (pion, vx, vy)
+        pion, dx, dy, v = action
+        pion, dx, dy, v = pion.squeeze(0).detach().cpu(), dx.squeeze(0).detach().cpu(), dy.squeeze(0).detach().cpu(), v.squeeze(0).detach().cpu()
+        action = (pion, dx, dy, v)
+        state, log_proba, valeur = state.detach().cpu(), log_proba.detach().cpu(), valeur.detach().cpu()
         
         self.memory_game.append([state, action, valeur, log_proba, 0])
         
-        pion, vx, vy = pion.cpu().item(), vx.cpu().item(), vy.cpu().item()
-        #print(torch.exp(log_proba))
+        pion, dx, dy, v = pion.item(), dx.item(), dy.item(), v.item()
+        #print("prob :",torch.exp(log_proba))
         
-        game.objets[pion + self.team * self.n_pions].vitesse = np.array([vx, vy], dtype=np.float64)
-        
-    def reward(self, r, gamma=True):
-        if gamma == True :
-            for i in range(len(self.memory_game)) :
-                self.memory_game[i][-1] += r * self.gamma**(len(self.memory_game)-1-i)
-        elif self.memory_game != [] :
-            self.memory_game[-1][-1] += r
+        v = 19 / (1 + np.exp(-v)) + 1
 
-    def fin(self, reward) :
+        angle = np.arctan2(dy, dx)
+        
+        game.objets[pion + self.team * self.n_pions].vitesse = np.array([np.cos(angle) * v, np.sin(angle) * v], dtype=np.float64)
+
+
+    def avantage(self):
+        rewards = np.array([e[-1] for e in self.memory_game], dtype=np.float32)
+        valeurs = np.array([e[2] for e in self.memory_game], dtype=np.float32)
+        
+        gae = rewards[-1] - valeurs[-1]
+        returns = [gae + valeurs[-1]]
+        
+        for i in reversed(range(len(rewards)-1)) :
+            delta = rewards[i] + self.gamma * valeurs[i+1] - valeurs[i]
+            gae = delta + self.gamma * self.lambda_ * gae
+            returns.insert(0, gae + valeurs[i])
+        
+        avantages = np.array(returns) - valeurs
+        avantages = (avantages - np.mean(avantages)) / (np.std(avantages) + 1e-15)
+        
         for i in range(len(self.memory_game)) :
-            if abs(self.memory_game[i][-1]) > 0.2 :
-                self.memory.append(self.memory_game[i])
+            self.memory_game[i][-1] = returns[i]
+            self.memory_game[i][2] = avantages[i]
+    
+    def fin(self, score) :
+        if self.memory_game :
+            self.avantage()
+        
+        for i in range(len(self.memory_game)) :
+            self.memory.append(self.memory_game[i])
         self.memory_game = []
         
         if len(self.memory) > self.batch_size :
             self.trainer.train_step(self.memory)
             self.memory = []
-        self.n_buts += 1 if reward == 1 else 0
+            
+        self.n_buts += 1 if score == 1 else 0
         print("Team",self.team,":",self.n_buts,"buts")
+        
         if self.n_buts%10 == 0 :
             self.save(filename="save"+str(self.team)+".pth")
     
@@ -66,8 +90,7 @@ class Agent:
         torch.save({
         'actor': self.model.actor.state_dict(),
         'critic': self.model.critic.state_dict(),
-        'optimizer_critic': self.model.optimizer_critic.state_dict(),
-        'optimizer_actor': self.model.optimizer_actor.state_dict(),
+        'optimizer': self.model.optimizer.state_dict(),
         "n_buts": self.n_buts}, filename)
         print(f"💾 Modèle {str(self.team)} sauvegardé dans {filename}")
         
@@ -76,8 +99,7 @@ class Agent:
             sauvegarde = torch.load(filename)
             self.model.actor.load_state_dict(sauvegarde["actor"])
             self.model.critic.load_state_dict(sauvegarde["critic"])
-            self.model.optimizer_critic.load_state_dict(sauvegarde["optimizer_critic"])
-            self.model.optimizer_actor.load_state_dict(sauvegarde["optimizer_actor"])
+            self.model.optimizer.load_state_dict(sauvegarde["optimizer"])
             self.n_buts = sauvegarde["n_buts"]
             
             self.model.actor.to(self.model.device)

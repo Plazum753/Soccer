@@ -14,7 +14,7 @@ class Model :
         for i in range(1, n_hidden_layers):
             layer_actor.append(nn.Linear(hidden_size, hidden_size))
             layer_actor.append(nn.ReLU())
-        layer_actor.append(nn.Linear(hidden_size,n_pions+4))
+        layer_actor.append(nn.Linear(hidden_size,n_pions+6))
         
         self.actor = nn.Sequential(*layer_actor)
 
@@ -33,59 +33,71 @@ class Model :
         self.actor.to(self.device)
         self.critic.to(self.device)
         
-        self.optimizer_critic = optim.Adam(self.critic.parameters(), lr = self.lr)
-        self.optimizer_actor = optim.Adam(self.actor.parameters(), lr = self.lr)
+        self.optimizer = optim.Adam(list(self.actor.parameters()) + list(self.critic.parameters()), lr = self.lr)
+
     
-    def forward(self, state, n_pions=5, action=None) :
+    def forward(self, state, n_pions=5, action=None, training=True) :
         out_actor = self.actor(state)
         valeur = self.critic(state)
 
         if out_actor.dim() == 1 :
             out_actor = out_actor.unsqueeze(0)
-                    
+        
         pions = out_actor[:, :n_pions]
-        vx = out_actor[:, -4:-2]        
-        vy = out_actor[:, -2:]
+        dx = out_actor[:, -6:-4]  
+        dy = out_actor[:, -4:-2]
+        v = out_actor[:, -2:]
+        
         pions = torch.nan_to_num(pions, nan=0.0, posinf=1e3, neginf=-1e3)
-        vx = torch.nan_to_num(vx, nan=0.0, posinf=1e3, neginf=-1e3)
-        vy = torch.nan_to_num(vy, nan=0.0, posinf=1e3, neginf=-1e3)
+        dx = torch.nan_to_num(dx, nan=0.0, posinf=1e3, neginf=-1e3)
+        dy = torch.nan_to_num(dy, nan=0.0, posinf=1e3, neginf=-1e3)
+        v = torch.nan_to_num(v, nan=0.0, posinf=1e3, neginf=-1e3)
         
         pions_prob = dist.Categorical(logits=pions)
         pion = pions_prob.sample() if action is None else action[0] 
         log_prob_pion = pions_prob.log_prob(pion)
+        entropy_pions = pions_prob.entropy()
         
-        sigma_vx = F.softplus(vx[:, 1]) + 1e-3
-        normal_vx = dist.Normal(vx[:, 0], sigma_vx)
-        epsilon_vx = torch.randn_like(sigma_vx)
-        vx_choix = vx[:, 0] + sigma_vx * epsilon_vx if action is None else action[1]
-        log_prob_vx = normal_vx.log_prob(vx_choix)
+        sigma_dx = F.softplus(dx[:, 1]) + 1e-6
+        normal_dx = dist.Normal(dx[:, 0], sigma_dx)
+        epsilon_dx = torch.randn_like(sigma_dx)
+        dx_choix = dx[:, 0] + sigma_dx * epsilon_dx if action is None else action[1]
+        log_prob_dx = normal_dx.log_prob(dx_choix)
         
-        sigma_vy = F.softplus(vy[:, 1]) + 1e-3
-        normal_vy = dist.Normal(vy[:, 0], sigma_vy)
-        epsilon_vy = torch.randn_like(sigma_vy)
-        vy_choix = vy[:, 0] + sigma_vy * epsilon_vy if action is None else action[2]
-        log_prob_vy = normal_vy.log_prob(vy_choix)
+        sigma_dy = F.softplus(dy[:, 1]) + 1e-6
+        normal_dy = dist.Normal(dy[:, 0], sigma_dy)
+        epsilon_dy = torch.randn_like(sigma_dy)
+        dy_choix = dy[:, 0] + sigma_dy * epsilon_dy if action is None else action[2]
+        log_prob_dy = normal_dy.log_prob(dy_choix)
         
-        vx_choix = 20 * torch.tanh(vx_choix)
-        vy_choix = 20 * torch.tanh(vy_choix)
+        sigma_v = F.softplus(v[:, 1]) + 1e-6
+        normal_v = dist.Normal(v[:, 0], sigma_v)
+        epsilon_v = torch.randn_like(sigma_v)
+        v_choix = v[:, 0] + sigma_v * epsilon_v if action is None else action[3]
+        log_prob_v = normal_v.log_prob(v_choix)
         
-        norme = torch.sqrt(vx_choix**2 + vy_choix**2)
-        mask = norme < 1
-        vx_choix[mask] /= norme[mask] + 1e-15
-        vy_choix[mask] /= norme[mask] + 1e-15
-
-        mask = norme > 20
-        vx_choix[mask] /= norme[mask]/20
-        vy_choix[mask] /= norme[mask]/20
+        if training == False :
+            pion = torch.argmax(pions, dim=1)
+            dx_choix = dx[:, 0]
+            dy_choix = dy[:, 0]
+            v_choix = v[:, 0]
+                
+        entropy_pions = pions_prob.entropy() 
+        entropy_dx = normal_dx.entropy()
+        entropy_dy = normal_dy.entropy()
+        entropy_v = normal_v.entropy()
         
-        log_proba = log_prob_pion + log_prob_vx + log_prob_vy
+        entropie = entropy_pions + entropy_dx + entropy_dy + entropy_v
         
-        action = (pion, vx_choix, vy_choix)
+        log_proba = log_prob_pion + log_prob_dx + log_prob_dy + log_prob_v
         
-        return (action, log_proba, valeur)
+        action = (pion, dx_choix, dy_choix, v_choix)
+        #print("action :",action)
+        
+        return (action, log_proba, valeur, entropie)
         
 class Trainer :
-    def __init__(self, model, batch_size=64, epoch=4, epsilon=0.2, n_pions=5):
+    def __init__(self, model, batch_size=256, epoch=4, epsilon=0.3, n_pions=5):
         self.model = model
         self.batch_size = batch_size
         self.epsilon = epsilon
@@ -98,32 +110,28 @@ class Trainer :
         idx = torch.randperm(self.batch_size)
 
         states = torch.stack([batch[i][0] for i in idx]).to(self.device)
-        valeurs = torch.stack([batch[i][2] for i in idx]).detach().to(self.device)
+        avantages = torch.tensor([batch[i][2] for i in idx], dtype=torch.float32, device=self.device)
         log_probas = torch.stack([batch[i][3] for i in idx]).detach().to(self.device)
-        rewards = torch.tensor([batch[i][4] for i in idx], dtype=torch.float32, device=self.device)
+        returns = torch.tensor([batch[i][-1] for i in idx], dtype=torch.float32, device=self.device)
         
         pions = torch.stack([batch[i][1][0] for i in idx]).to(self.device).detach()
-        vx = torch.stack([batch[i][1][1] for i in idx]).to(self.device).detach()
-        vy = torch.stack([batch[i][1][2] for i in idx]).to(self.device).detach()
-        actions = (pions, vx, vy)
-        
-        with torch.no_grad() :
-            avantages = (rewards - valeurs).detach()
+        dx = torch.stack([batch[i][1][1] for i in idx]).to(self.device).detach()
+        dy = torch.stack([batch[i][1][2] for i in idx]).to(self.device).detach()
+        v = torch.stack([batch[i][1][3] for i in idx]).to(self.device).detach()
+        actions = (pions, dx, dy, v)
         
         for i in range(self.epoch):
-            _, _, valeur_pred = self.model.forward(states, action=actions, n_pions=self.n_pions)
+            _, log_proba_new, valeur_pred, entropie = self.model.forward(states, action=actions, n_pions=self.n_pions)
             
-            loss_critic = self.loss_criterion(valeur_pred.squeeze(), rewards)
-            
-            self.model.optimizer_critic.zero_grad()
-            loss_critic.backward()
-            self.model.optimizer_critic.step()
-            
-            _, log_proba_new, _ = self.model.forward(states, action=actions, n_pions=self.n_pions)
-
             ratio = torch.exp(log_proba_new - log_probas)
-            loss_actor = -(torch.min(ratio * avantages,torch.clamp(ratio,1-self.epsilon, 1+self.epsilon) * avantages)).mean()
+            L_clip = -torch.min(ratio * avantages,torch.clamp(ratio,1-self.epsilon, 1+self.epsilon) * avantages)
             
-            self.model.optimizer_actor.zero_grad()
-            loss_actor.backward()
-            self.model.optimizer_actor.step()
+            L_vf = self.loss_criterion(valeur_pred.squeeze(), returns)
+
+            S = entropie.mean()
+            
+            loss = L_clip.mean() + 0.5 * L_vf - 0.01 * S
+            
+            self.model.optimizer.zero_grad()
+            loss.backward()
+            self.model.optimizer.step()
